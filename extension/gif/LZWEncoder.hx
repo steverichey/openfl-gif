@@ -1,4 +1,4 @@
-package gif;
+package extension.gif;
 
 import openfl.utils.ByteArray;
 
@@ -22,15 +22,12 @@ class LZWEncoder
 	private var initCodeSize:Int;
 	private var remaining:Int;
 	private var curPixel:Int;
-	
 	// GIFCOMPR.C - GIF Image compression routines
 	// Lempel-Ziv compression based on 'compress'. GIF modifications by
 	// David Rowley (mgardi@watdcsu.waterloo.edu)
 	// General DEFINEs
-	
 	private static var BITS:Int = 12;
 	private static var HSIZE:Int = 5003; // 80% occupancy
-	
 	// GIF Image compression - modified 'compress'
 	// Based on: compress.c - File compression ala IEEE Computer, June 1984.
 	// By Authors: Spencer W. Thomas (decvax!harpo!utah-cs!utah-gr!thomas)
@@ -39,7 +36,6 @@ class LZWEncoder
 	// Ken Turkowski (decvax!decwrl!turtlevax!ken)
 	// James A. Woods (decvax!ihnp4!ames!jaw)
 	// Joe Orost (decvax!vax135!petsd!joe)
-	
 	private var n_bits:Int; // number of bits/code
 	private var maxbits:Int = BITS; // user settable max # bits/code
 	private var maxcode:Int; // maximum code, given n_bits
@@ -48,12 +44,10 @@ class LZWEncoder
 	private var codetab:Array<Int> = [];
 	private var hsize:Int = HSIZE; // for dynamic table sizing
 	private var free_ent:Int = 0; // first unused entry
-	
-	// block compression parameters -- after all codes are used up,
-	// and compression rate changes, start over.
-	
+	/**
+	 * Block compression parameters -- after all codes are used up, and compression rate changes, start over.
+	 */
 	private var clear_flg:Bool = false;
-	
 	// Algorithm: use open addressing double hashing (no chaining) on the
 	// prefix code / next character combination. We do a variant of Knuth's
 	// algorithm D (vol. 3, sec. 6.4) along with G. Knott's relatively-prime
@@ -65,11 +59,9 @@ class LZWEncoder
 	// for the decompressor. Late addition: construct the table according to
 	// file size for noticeable speed improvement on small files. Please direct
 	// questions about this implementation to ames!jaw.
-	
 	private var g_init_bits:Int;
 	private var ClearCode:Int;
 	private var EOFCode:Int;
-	
 	// output
 	// Output the given code.
 	// Inputs:
@@ -83,15 +75,16 @@ class LZWEncoder
 	// Maintain a BITS character long buffer (so that 8 codes will
 	// fit in it exactly). Use the VAX insv instruction to insert each
 	// code in turn. When the buffer fills up empty it and start over.
-	
 	private var cur_accum:Int = 0;
 	private var cur_bits:Int = 0;
 	private var masks:Array<UInt> = [ 0x0000, 0x0001, 0x0003, 0x0007, 0x000F, 0x001F, 0x003F, 0x007F, 0x00FF, 0x01FF, 0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF, 0xFFFF ];
-	
-	// Number of characters so far in this 'packet'
+	/**
+	 * Number of characters so far in this 'packet'
+	 */
 	private var a_count:Int;
-	
-	// Define the storage for the packet accumulator
+	/**
+	 * Define the storage for the packet accumulator
+	 */
 	private var accum:ByteArray = new ByteArray();
 	
 	public function new(width:Int, height:Int, pixels:ByteArray, color_depth:Int)
@@ -235,7 +228,6 @@ class LZWEncoder
 		output(EOFCode, outs);
 	}
 	
-	// ----------------------------------------------------------------------------
 	public function encode(os:ByteArray):Void
 	{
 		os.writeByte(initCodeSize); // write "initial code size" byte
@@ -245,7 +237,9 @@ class LZWEncoder
 		os.writeByte(0); // write block terminator
 	}
 	
-	// Flush the packet to disk, and reset the accumulator
+	/**
+	 * Flush the packet to disk, and reset the accumulator.
+	 */
 	private function flush_char(outs:ByteArray):Void
 	{
 		if (a_count > 0)
@@ -261,14 +255,17 @@ class LZWEncoder
 		return (1 << n_bits) - 1;
 	}
 	
-	// ----------------------------------------------------------------------------
-	// Return the next pixel from the image
-	// ----------------------------------------------------------------------------
+	/**
+	 * Return the next pixel from the image.
+	 */
 	private function nextPixel():Int
 	{
-		if (remaining == 0) return EOF;
+		if (remaining == 0)
+		{
+			return EOF;
+		}
 		
-		--remaining;
+		remaining--;
 		
 		var pix:Float = pixAry[curPixel++];
 		
@@ -293,6 +290,7 @@ class LZWEncoder
 		
 		// If the next entry is going to be too big for the code size,
 		// then increase it, if possible.
+		
 		if (free_ent > maxcode || clear_flg)
 		{
 			if (clear_flg)
@@ -301,24 +299,28 @@ class LZWEncoder
 				maxcode = MAXCODE(n_bits = g_init_bits);
 				clear_flg = false;
 				
-			} else
+			}
+			else
 			{
+				n_bits++;
 				
-				++n_bits;
-				
-				if (n_bits == maxbits) maxcode = maxmaxcode;
-				
-				else maxcode = MAXCODE(n_bits);
-				
+				if (n_bits == maxbits)
+				{
+					maxcode = maxmaxcode;
+				}
+				else
+				{
+					maxcode = MAXCODE(n_bits);
+				}
 			}
 		}
 		
 		if (code == EOFCode) 
 		{
 			// At EOF, write the rest of the buffer.
+			
 			while (cur_bits > 0) 
 			{
-				
 				char_out((cur_accum & 0xff), outs);
 				cur_accum >>= 8;
 				cur_bits -= 8;
