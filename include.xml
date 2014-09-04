@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project>
+	<java path="android" if="android" />
+	<java path="libs/google-play-services.jar" if="android" />
+	<java path="libs/android-support-v4.jar" if="android" />
+	<template path="template"/>
+</project>

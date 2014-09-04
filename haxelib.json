@@ -1,0 +1,11 @@
+{
+  "name": "OpenFL GIF",
+  "url": "https://github.com/steverichey/openfl-gif",
+  "license": "MIT",
+  "tags": [],
+  "description": "Create a GIF from any OpenFL project.",
+  "version": "0.1.0",
+  "releasenote": "",
+  "contributors": [""],
+  "dependencies": { }
+}
