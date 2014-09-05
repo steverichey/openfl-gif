@@ -1,6 +1,27 @@
 # OpenFL GIF Extension
 
-Make GIFs in any OpenFL project.
+Make GIFs in any OpenFL project. WIP
+
+## Usage
+
+````
+import sys.io.File;
+import openfl.display.BitmapData;
+import extension.gif.GIFEncoder;
+
+class MyClass
+{
+	static public function myFunction(FirstFrame:BitmapData, SecondFrame:BitmapData):Void
+	{
+		var encoder:GIFEncoder = new GIFEncoder();
+		encoder.addFrame(FirstFrame);
+		encoder.addFrame(SecondFrame);
+		encoder.finish();
+		
+		File.saveBytes("myGif.gif", encoder.output);
+	}
+}
+````
 
 ## Credits
 
