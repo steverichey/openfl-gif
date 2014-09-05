@@ -4,8 +4,9 @@ import openfl.utils.ByteArray;
 import openfl.display.BitmapData;
 import openfl.display.Bitmap;
 
-import gif.NeuQuant;
-import gif.LZWEncoder;
+#if !flash
+import sys.io.File;
+#end
 
 /**
  * This class lets you encode animated GIF files.
@@ -202,16 +203,21 @@ class GIFEncoder
 	/**
 	* Analyzes image colors and creates color map.
 	*/
-	inline private function analyzePixels():ByteArray
+	private inline function analyzePixels():ByteArray
 	{
 		var len:Int = pixels.length;
 		var nPix:Int = Std.int(len / 3);
 		indexedPixels = new ByteArray();
-		var nq:NeuQuant = new NeuQuant(pixels, len, quality);
+		//var nq:NeuQuant = new NeuQuant(pixels, len, quality);
+		var nq:NeuQuant = new NeuQuant();
 		
 		// initialize quantizer
 		
-		colorTab = nq.process(); // create reduced palette
+		//colorTab = nq.process(); // create reduced palette
+		
+		nq.quantize(pixels, true, colorDepth, 1, quality, true);
+		
+		colorTab = nq.getColorMap();
 		
 		// map image pixels to new palette
 		
@@ -219,7 +225,8 @@ class GIFEncoder
 		
 		for (j in 0...nPix)
 		{
-			var index:Int = nq.map(pixels[k++] & 0xff, pixels[k++] & 0xff, pixels[k++] & 0xff);
+			//var index:Int = nq.map(pixels[k++] & 0xff, pixels[k++] & 0xff, pixels[k++] & 0xff);
+			var index:Int = nq.getColor(pixels[k++] & 0xff << 16 | pixels[k++] & 0xff << 8 | pixels[k++] & 0xff);
 			usedEntry[index] = true;
 			indexedPixels[j] = index;
 		}
@@ -437,13 +444,18 @@ class GIFEncoder
 	}
 	
 	/**
-	 * Limits minimum quality value to 1.
+	 * Limits minimum quality value to 1, maximum to 30.
 	 */
 	private inline function set_quality(Value:UInt):UInt
 	{
 		if (Value < 1)
 		{
 			Value = 1;
+		}
+		
+		if (Value > 30)
+		{
+			Value = 30;
 		}
 		
 		return quality = Value;
@@ -521,4 +533,26 @@ class GIFEncoder
 		
 		return height = Value;
 	}
+	
+	#if !flash
+	/**
+	 * Convenience function to output a GIF file from an array of BitmapData frames. Not supported in Flash.
+	 * 
+	 * @param	Path    Path to the output file. Will throw exception if cannot write.
+	 * @param	Frames  An array of BitmapData, with each BitmapData object representing one frame of the animation.
+	 */
+	static public function exportFromArray(Path:String, Frames:Array<BitmapData>):Void
+	{
+		var encoder:GIFEncoder = new GIFEncoder();
+		
+		for (frame in Frames)
+		{
+			encoder.addFrame(frame);
+		}
+		
+		encoder.finish();
+		
+		File.saveBytes(Path, encoder.output);
+	}
+	#end
 }

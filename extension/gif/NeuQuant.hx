@@ -92,7 +92,6 @@ class NeuQuant
 	 * Maximum number of colours that can be used. actual number is now passed to initcolors.
 	 */
 	static var MAXNETSIZE: Int = 256;
-	
 	/**
 	 * Four primes near 500 - assume no image has a length so large that it is divisible by all four primes
 	 */
@@ -101,56 +100,85 @@ class NeuQuant
     static var prime3: Int	=	487;
     static var prime4: Int	=	503;
     static var minpicturebytes: Int = 4 * prime4;
-	
 	/**
 	 * Network Definitions
 	 */
 	static var maxnetpos: Int = (MAXNETSIZE-1);
-	public static var ncycles: Int	=	100;			// no. of learning cycles
-
-	/* defs for freq and bias */
+	/**
+	 * Number of learning cycles
+	 */
+	public static var ncycles:Int = 100;
+	/**
+	 * Defs for freq and bias
+	 */
 	static var gammashift: Int = 10;			/* gamma = 1024 */
 	static var gamma: Float =  	(1<<gammashift);
 	static var betashift: Int =	10;
 	static var beta: Float = (1.0 / (1<<betashift));	/* beta = 1/1024 */
-	static var betagamma: Float	 = (1<<(gammashift-betashift));
-
-	/* defs for decreasing radius factor */
+	static var betagamma: Float	 = (1 << (gammashift - betashift));
+	/**
+	 * defs for decreasing radius factor
+	 */
 	static var initrad: Int = (MAXNETSIZE>>3);		/* for 256 cols, radius starts */
 	static var initradius: Float = (initrad * 1.0);	/* and decreases by a */
 	static var radiusdec: Float = 30;			/* factor of 1/30 each cycle */ 
-
-	/* defs for decreasing alpha factor */
+	/**
+	 * defs for decreasing alpha factor
+	 */
 	static var alphabiasshift: Int = 10;			/* alpha starts at 1.0 */
 	static var initalpha: Float = (1<<alphabiasshift);
 	var alphadec: Float;					/* biased by 10 bits */
-
-	/* radbias and alpharadbias used for radpower calculation */
+	
+	/**
+	 * radbias and alpharadbias used for radpower calculation
+	 */
 	static var radbiasshift: Int =	8;
 	static var radbias: Int = (1<<radbiasshift);
 	static var alpharadbshift: Int = (alphabiasshift + radbiasshift);
 	static var alpharadbias: Float = (1<<alpharadbshift);
-
-	/* Types and Global Variables
-	-------------------------- */
-   
-	var thepicture: Bytes;		/* the input image itself */
-	var isARGB: Bool; 			/* ARGB (e.g. Flash) or RGBA (e.g. PNG) */
-	var lengthcount: Int;				/* lengthcount = H*W*3 */
+	/**
+	 * The input image itself
+	 */
+	private var thepicture:Bytes;
+	/**
+	 * ARGB (e.g. Flash) or RGBA (e.g. PNG)
+	 */
+	private var isARGB:Bool;
+	/**
+	 * Lengthcount = H*W*3
+	 */
+	private var lengthcount:Int;
+	/**
+	 * The network itself
+	 */
+	private var network: Array<NqPixel>;
+	/**
+	 * For network lookup - really 256
+	 */
+	private var netindex: Array<Int>;
+	/**
+	 * Bias and freq arrays for learning
+	 */
+	private var bias:Array<Float>;
+	private var freq:Array<Float>;
+	/**
+	 * Radpower for precomputation
+	 */
+	private var radpower:Array<Float>;
+	/**
+	 * Number of colours to use. Made a global instead of #define
+	 */
+	private var netsize:Int = 0;
+	/**
+	 * 1.0/2.2 usually
+	 */
+	private var gamma_correction:Float = 1.0;
 	
-	var network: Array<NqPixel>;			/* the network itself */
-	var netindex: Array<Int>;			/* for network lookup - really 256 */
-
-	var bias: Array<Float>;			/* bias and freq arrays for learning */
-	var freq: Array<Float>;
-	var radpower: Array<Float>;			/* radpower for precomputation */
-
-	var netsize: Int;                             /* Number of colours to use. Made a global instead of #define */
-
-	var gamma_correction: Float; // 1.0/2.2 usually
+	private var compareInLabColorSpace:Bool;
 	
-	var compareInLabColorSpace: Bool;
-	
+	/**
+	 * Just instantiates this NeuQuant instance.
+	 */
 	public function new() { }
 	
 	/**
@@ -219,9 +247,9 @@ class NeuQuant
 		return quantizationStatus;
 	}
 	
-	/* Initialise network in range (0,0,0,0) to (255,255,255,255) and set parameters
-	   ----------------------------------------------------------------------- */
-
+	/**
+	 * Initialise network in range (0,0,0,0) to (255,255,255,255) and set parameters
+	 */
 	var biasvalues: Array<Float>;
 
 	function initnet(thepic: Bytes, colours: Int, gamma_c: Float): Void {
@@ -371,7 +399,7 @@ class NeuQuant
 		{
 			var xyz = rgb2xyz(colormap[i].r, colormap[i].g, colormap[i].b);
 			var lab = xyz2cielab(xyz.x, xyz.y, xyz.z );
-			labColorMap.shift( { al: colormap[i].al, l: lab.l, a: lab.a, b: lab.b } );
+			labColorMap.unshift({ al: colormap[i].al, l: lab.l, a: lab.a, b: lab.b });
 		}
 	}
 	
@@ -479,6 +507,33 @@ class NeuQuant
 	public function getColor(index:Int):Int
 	{
 		return (colormap[index].al << 24) | (colormap[index].r << 16) | (colormap[index].g << 8) | colormap[index].b;
+	}
+	
+	/**
+	 * Returns the current palette as a ByteArray.
+	 */
+	public function getColorMap():ByteArray
+	{
+		var map:ByteArray = new ByteArray();
+		var index:Array<Int> = [for (i in 0...netsize) 0];
+		
+		for (i in 0...netsize)
+		{
+			index[Std.int(network[i].al * 255)] = i;
+		}
+		
+		var k:Int = 0;
+		var j:Int = 0;
+		
+		for (i in 0...netsize)
+		{
+			j = index[i];
+			map[k++] = Std.int(network[j].r * 255);
+			map[k++] = Std.int(network[j].g * 255);
+			map[k++] = Std.int(network[j].b * 255);
+		}
+		
+		return map;
 	}
 	
 	function inxsearch(al:Int, b:Int, g:Int, r:Int):Int
@@ -670,8 +725,7 @@ class NeuQuant
 	/**
 	 * Main Learning Loop
 	 */
-	var learningStatus: LearningStatus;
-	
+	var learningStatus:LearningStatus;
 	/**
 	 * Sampling factor 1..30
 	 * 
@@ -811,8 +865,8 @@ class NeuQuant
 		
 		s.finished = true;
 	}
-
-	public static function rgb2xyz(r:Int, g:Int, b: Int):Dynamic
+	
+	private static function rgb2xyz(r:Int, g:Int, b: Int):Dynamic
 	{
 		var fR: Float = ( r / 255);        //R from 0 to 255
 		var fG: Float = ( g / 255 );        //G from 0 to 255
