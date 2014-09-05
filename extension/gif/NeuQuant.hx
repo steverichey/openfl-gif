@@ -91,51 +91,50 @@ class NeuQuant
 	/**
 	 * Maximum number of colours that can be used. actual number is now passed to initcolors.
 	 */
-	static var MAXNETSIZE: Int = 256;
+	private static inline var MAX_NET_SIZE:Int = 256;
 	/**
 	 * Four primes near 500 - assume no image has a length so large that it is divisible by all four primes
 	 */
-	static var prime1: Int	=	499;
-    static var prime2: Int	=	491;
-    static var prime3: Int	=	487;
-    static var prime4: Int	=	503;
-    static var minpicturebytes: Int = 4 * prime4;
+	private static inline var PRIME_1:Int = 499;
+    private static inline var PRIME_2:Int = 491;
+    private static inline var PRIME_3:Int = 487;
+    private static inline var PRIME_4:Int = 503;
+    private static inline var MIN_PICTURE_BYTES:Int = 4 * PRIME_4;
 	/**
 	 * Network Definitions
 	 */
-	static var maxnetpos: Int = (MAXNETSIZE-1);
+	private static inline var MAX_NET_POS:Int = MAX_NET_SIZE - 1;
 	/**
 	 * Number of learning cycles
 	 */
-	public static var ncycles:Int = 100;
+	private static inline var N_CYCLES:Int = 100;
 	/**
 	 * Defs for freq and bias
 	 */
-	static var gammashift: Int = 10;			/* gamma = 1024 */
-	static var gamma: Float =  	(1<<gammashift);
-	static var betashift: Int =	10;
-	static var beta: Float = (1.0 / (1<<betashift));	/* beta = 1/1024 */
-	static var betagamma: Float	 = (1 << (gammashift - betashift));
+	private static inline var GAMMA_SHIFT:Int = 10; /* gamma = 1024 */
+	private static inline var GAMMA:Float = 1 << GAMMA_SHIFT;
+	private static inline var BETA_SHIFT:Int = 10;
+	private static inline var BETA:Float = 1.0 / (1 << BETA_SHIFT); /* beta = 1/1024 */
+	private static inline var BETA_GAMMA:Float = 1 << (GAMMA_SHIFT - BETA_SHIFT);
 	/**
 	 * defs for decreasing radius factor
 	 */
-	static var initrad: Int = (MAXNETSIZE>>3);		/* for 256 cols, radius starts */
-	static var initradius: Float = (initrad * 1.0);	/* and decreases by a */
-	static var radiusdec: Float = 30;			/* factor of 1/30 each cycle */ 
+	private static inline var INIT_RAD:Int = MAX_NET_SIZE >> 3; /* for 256 cols, radius starts */
+	private static inline var INIT_RADIUS:Float = INIT_RAD * 1.0; /* and decreases by a */
+	private static inline var RADIUS_DEC:Float = 30; /* factor of 1/30 each cycle */ 
 	/**
 	 * defs for decreasing alpha factor
 	 */
-	static var alphabiasshift: Int = 10;			/* alpha starts at 1.0 */
-	static var initalpha: Float = (1<<alphabiasshift);
-	var alphadec: Float;					/* biased by 10 bits */
-	
+	private static inline var ALPHA_BIAS_SHIFT:Int = 10; /* alpha starts at 1.0 */
+	private static inline var INIT_ALPHA:Float = 1 << ALPHA_BIAS_SHIFT;
+	private static var alphadec:Float = 0; /* biased by 10 bits, non-constant */
 	/**
 	 * radbias and alpharadbias used for radpower calculation
 	 */
-	static var radbiasshift: Int =	8;
-	static var radbias: Int = (1<<radbiasshift);
-	static var alpharadbshift: Int = (alphabiasshift + radbiasshift);
-	static var alpharadbias: Float = (1<<alpharadbshift);
+	private static inline var RAD_BIAS_SHIFT:Int = 8;
+	private static inline var RAD_BIAS:Int = 1 << RAD_BIAS_SHIFT;
+	private static inline var ALPHA_RAD_B_SHIFT:Int = ALPHA_BIAS_SHIFT + RAD_BIAS_SHIFT;
+	private static inline var ALPHA_RAD_BIAS:Float = 1 << ALPHA_RAD_B_SHIFT;
 	/**
 	 * The input image itself
 	 */
@@ -250,9 +249,10 @@ class NeuQuant
 	/**
 	 * Initialise network in range (0,0,0,0) to (255,255,255,255) and set parameters
 	 */
-	var biasvalues: Array<Float>;
-
-	function initnet(thepic: Bytes, colours: Int, gamma_c: Float): Void {
+	var biasvalues:Array<Float>;
+	
+	function initnet(thepic: Bytes, colours: Int, gamma_c: Float):Void
+	{
 		var i: Int;
 		
 		gamma_correction = gamma_c;
@@ -262,7 +262,9 @@ class NeuQuant
 		netsize = colours; 
 		
 		biasvalues = new Array<Float>();
-		for(i in 0...MAXNETSIZE) {
+		
+		for (i in 0...MAX_NET_SIZE)
+		{
 			var temp: Float;
 			temp = Math.pow(i/255.0, 1.0/gamma_correction) * 255.0;
 			temp = Math.round(temp);
@@ -272,7 +274,9 @@ class NeuQuant
 		network = new Array<NqPixel>();
 		freq = new Array<Float>();
 		bias = new Array<Float>();
-		for (i in 0 ... netsize) {
+		
+		for (i in 0 ... netsize)
+		{
 			var v: Float = biasvalue(Std.int(i * 256 / netsize));
 			network.push({b:v, g:v, r:v, al: if (i < 16) (i*16)*1.0 else 255.0});
 			freq.push(1.0/netsize);	/* 1/netsize */
@@ -343,46 +347,75 @@ class NeuQuant
 		var previouscol: Int, startpos: Int;
 		
 		netindex = new Array<Int>();
-		for (i in 0...256) {
+		
+		for (i in 0...256)
+		{
 			netindex.push(0);
 		}
 		
 		colormap = new Array<NqColormap>();
-		for (i in 0...netsize) {
-			colormap.push({
-				r: Std.int(biasvalue(unbiasvalue(network[i].r))),
-				g: Std.int(biasvalue(unbiasvalue(network[i].g))),
-				b: Std.int(biasvalue(unbiasvalue(network[i].b))),
-				al: round_biased(network[i].al) });
+		
+		for (i in 0...netsize)
+		{
+			colormap.push(
+				{
+					r: Std.int(biasvalue(unbiasvalue(network[i].r))),
+					g: Std.int(biasvalue(unbiasvalue(network[i].g))),
+					b: Std.int(biasvalue(unbiasvalue(network[i].b))),
+					al: round_biased(network[i].al)
+				});
 		}
 		
 		previouscol = 0;
 		startpos = 0;
-		for (i in 0 ... netsize) {
+		
+		for (i in 0 ... netsize)
+		{
 			smallpos = i;
-			smallval = (colormap[i].g);			/* index on g */
-			/* find smallest in i..netsize-1 */
-			for (j in (i+1)...netsize) {
-				if ((colormap[j].g) < smallval) {		/* index on g */
+			smallval = (colormap[i].g); // index on g
+			
+			// find smallest in i..netsize-1
+			
+			for (j in (i + 1)...netsize)
+			{
+				if ((colormap[j].g) < smallval)
+				{
+					// index on g
 					smallpos = j;
-					smallval = (colormap[j].g);	/* index on g */
+					smallval = (colormap[j].g);	// index on g
 				}
 			}
-			/* swap colormap[i] (i) and colormap[smallpos] (smallpos) entries */
-			if (i != smallpos) {
+			
+			// swap colormap[i] (i) and colormap[smallpos] (smallpos) entries
+			
+			if (i != smallpos)
+			{
 				var temp = network[smallpos];   network[smallpos] = network[i];   network[i] = temp;
 				var tempc = colormap[smallpos];   colormap[smallpos] = colormap[i];   colormap[i] = tempc;
 			}
-			/* smallval entry is now in position i */
-			if (smallval != previouscol) {
+			
+			// smallval entry is now in position i
+			
+			if (smallval != previouscol)
+			{
 				netindex[previouscol] = (startpos+i)>>1;
-				for (j in (previouscol+1)...(smallval)) netindex[j] = i;
+				
+				for (j in (previouscol + 1)...(smallval))
+				{
+					netindex[j] = i;
+				}
+				
 				previouscol = smallval;
 				startpos = i;
 			}
 		}
-		netindex[previouscol] = (startpos+maxnetpos)>>1;
-		for (j in (previouscol+1)...256) netindex[j] = maxnetpos; /* really 256 */
+		
+		netindex[previouscol] = (startpos + MAX_NET_POS) >> 1;
+		
+		for (j in (previouscol + 1)...256)
+		{
+			netindex[j] = MAX_NET_POS; /* really 256 */
+		}
 	}
 	
 	inline function colorimportance(al:Float):Float
@@ -648,13 +681,14 @@ class NeuQuant
 				if (dist<bestd) {bestd=dist; bestpos=i;}
 				if (dist<bestbiasd_biased) {bestbiasd=dist - bias[i]; bestbiaspos=i;}
 			}
-			betafreq = freq[i] / (1<< betashift);
+			betafreq = freq[i] / (1 << BETA_SHIFT);
 			freq[i] -= betafreq;
-			bias[i] += betafreq * (1<<gammashift);
+			bias[i] += betafreq * (1 << GAMMA_SHIFT);
 		}
-		freq[bestpos] += beta;
-		bias[bestpos] -= betagamma;
-		return(bestbiaspos);
+		freq[bestpos] += BETA;
+		bias[bestpos] -= BETA_GAMMA;
+		
+		return bestbiaspos;
 	}
 	
 	/**
@@ -671,7 +705,7 @@ class NeuQuant
 	{    
 		var colorimp: Float = 1.0;//0.5;// + 0.7*colorimportance(al);
 		
-		alpha /= initalpha;
+		alpha /= INIT_ALPHA;
 		
 		/* alter hit neuron */
 		network[i].al -= alpha*(network[i].al - al);
@@ -704,7 +738,7 @@ class NeuQuant
 		q = 0;
 		
 		while ((j<=hi) || (k>=lo)) {
-			a = (radpower[q++]) / alpharadbias;
+			a = (radpower[q++]) / ALPHA_RAD_BIAS;
 			if (j<=hi) {
 				network[j].al -= a*(network[j].al - al);
 				network[j].b  -= a*(network[j].b  - b) ;
@@ -743,12 +777,12 @@ class NeuQuant
 		
 		if (!s.started)
 		{
-			alphadec = 30 + ((samplefac-1)/3);
-			s.samplepixels = Std.int(lengthcount/(4*samplefac)); 
-			s.delta = Std.int(s.samplepixels/ncycles);  /* here's a problem with small images: samplepixels < ncycles => delta = 0 */
+			alphadec = 30 + ((samplefac - 1) / 3);
+			s.samplepixels = Std.int(lengthcount / (4 * samplefac)); 
+			s.delta = Std.int(s.samplepixels / N_CYCLES);  /* here's a problem with small images: samplepixels < ncycles => delta = 0 */
 			if(s.delta==0) s.delta = 1;        /* kludge to fix */
-			s.alpha = initalpha;
-			s.radius = initradius;
+			s.alpha = INIT_ALPHA;
+			s.radius = INIT_RADIUS;
 			
 			s.p = 0;
 			
@@ -758,7 +792,7 @@ class NeuQuant
 			
 			for (i in 0...(s.rad))
 			{
-				radpower.push(Math.floor( s.alpha*(((s.rad*s.rad - i*i)*radbias)/(s.rad*s.rad)) ));
+				radpower.push(Math.floor(s.alpha * (((s.rad * s.rad - i * i) * RAD_BIAS) / (s.rad * s.rad))));
 			}
 			
 			if (verbose)
@@ -766,25 +800,25 @@ class NeuQuant
 				trace("beginning 1D learning: initial radius=" + s.rad + "\n");
 			}
 			
-			if ((lengthcount % prime1) != 0)
+			if ((lengthcount % PRIME_1) != 0)
 			{
-				s.step = 4*prime1;
+				s.step = 4 * PRIME_1;
 			}
 			else
 			{
-				if ((lengthcount % prime2) != 0)
+				if ((lengthcount % PRIME_2) != 0)
 				{
-					s.step = 4*prime2;
+					s.step = 4 * PRIME_2;
 				}
 				else
 				{
-					if ((lengthcount % prime3) != 0)
+					if ((lengthcount % PRIME_3) != 0)
 					{
-						s.step = 4*prime3;
+						s.step = 4 * PRIME_3;
 					}
 					else
 					{
-						s.step = prime4;
+						s.step = PRIME_4;
 					}
 				}
 			}
@@ -839,7 +873,7 @@ class NeuQuant
 			if (s.i % s.delta == 0)
 			{
 				s.alpha -= s.alpha / alphadec;
-				s.radius -= s.radius / radiusdec;
+				s.radius -= s.radius / RADIUS_DEC;
 				s.rad = Std.int(s.radius);
 				if (s.rad <= 1)
 				{
@@ -848,7 +882,7 @@ class NeuQuant
 				
 				for (j in 0...(s.rad))
 				{
-					radpower[j] = Math.floor( s.alpha*(((s.rad*s.rad - j*j)*radbias)/(s.rad*s.rad)) );
+					radpower[j] = Math.floor( s.alpha * (((s.rad * s.rad - j * j) * RAD_BIAS) / (s.rad * s.rad)) );
 				}
 			}
 			
@@ -860,7 +894,7 @@ class NeuQuant
 		
 		if (verbose)
 		{
-			trace("finished 1D learning: final alpha=" + (1.0 * s.alpha / initalpha) + " !\n");
+			trace("finished 1D learning: final alpha=" + (1.0 * s.alpha / INIT_ALPHA) + " !\n");
 		}
 		
 		s.finished = true;

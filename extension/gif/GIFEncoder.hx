@@ -17,22 +17,20 @@ import sys.io.File;
  * @author Thibault Imbert (AS3 version - bytearray.org)
  * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
  * 
+ * @see http://www.u229.no/stuff/gifformat/
+ * 
  * @version 0.1 Haxe implementation
  */
 class GIFEncoder
 {
 	/**
-	 * Width of the image. This can only be set before the first frame has been added. If not set, will default to width of the first frame.
+	 * Width of the image.
 	 */
-	public var width(default, set):UInt = 0;
+	public var width(default, null):Int = 0;
 	/**
-	 * Height of the image. This can only be set before the first frame has been added. If not set, will default to height of the first frame.
+	 * Height of the image.
 	 */
-	public var height(default, set):UInt = 0;
-	/**
-	 * Whether or not we are ready to output frames.
-	 */
-	public var started(default, null):Bool = false;
+	public var height(default, null):Int = 0;
 	/**
 	 * Frame delay in milliseconds.
 	 */
@@ -63,7 +61,7 @@ class GIFEncoder
 	/**
 	 * The output ByteArray. Read-only. Can only be used to write a valid GIF file after finish() has been called.
 	 */
-	public var output(default, null):ByteArray;
+	public var output(default, null):ByteArray = new ByteArray();
 	/**
 	 * Transparent index in color table.
 	 */
@@ -71,11 +69,11 @@ class GIFEncoder
 	/**
 	 * BGR byte array from frame.
 	 */
-	private var pixels:ByteArray;
+	private var pixels:ByteArray; = null;
 	/**
 	 * Converted frame indexed to palette.
 	 */
-	private var indexedPixels:ByteArray;
+	private var indexedPixels:ByteArray = null;
 	/**
 	 * Number of bit planes.
 	 */
@@ -83,7 +81,7 @@ class GIFEncoder
 	/**
 	 * RGB palette.
 	 */
-	private var colorTab:ByteArray;
+	private var colorTab:ByteArray = null;
 	/**
 	 * Active palette entries.
 	 */
@@ -92,41 +90,27 @@ class GIFEncoder
 	 * Color table size (bits - 1).
 	 */
 	private var palSize:Int = 7;
-	/**
-	 * True if the first frame is being set.
-	 */
-	private var firstFrame:Bool = true;
+	
+	inline static private var MAX_SHORT:Int = 32767;
 	
 	/**
 	 * Instantiate object and call start()
 	 */
-	public function new()
+	public function new(FirstFrame:BitmapData)
 	{
-		start();
-	}
-	
-	/**
-	* Initiates GIF file creation on the given stream, and resets some members so that a new stream can be started.
-	* After calling start(), call addFrame() to add additional frames, and call finish() when done.
-	* 
-	* @return This GIFEncoder object.
-	*/
-	public function start():GIFEncoder
-	{
-		transIndex = 0;
+		width = FirstFrame.width;
+		height = FirstFrame.height;
 		
-		pixels = null;
-		indexedPixels = null;
-		colorTab = null;
+		if (width > MAX_SHORT || height > MAX_SHORT)
+		{
+			throw "Maximum GIF image height or width is " + MAX_SHORT + " pixels.";
+		}
 		
-		firstFrame = true;
+		// begin writing to output stream
 		
-		output = new ByteArray();
-		output.writeUTFBytes("GIF89a"); // header
+		writeHeader(output); // 6 bytes
+		writeLogicalScreenDescriptor(output, width, height); // 7 bytes
 		
-		started = true;
-		
-		return this;
 	}
 
 	/**
@@ -200,6 +184,48 @@ class GIFEncoder
 		return this;
 	}
 	
+	static public inline function writeHeader(To:ByteArray):ByteArray
+	{
+		To.writeUTFBytes("GIF89a"); // Header, 6 bytes
+		
+		return To;
+	}
+	
+	static public inline function writeLogicalScreenDescriptor(To:ByteArray, Width:Int, Height:Int):ByteArray
+	{
+		To.writeShort(Width);
+		To.writeShort(Height);
+		To.writeByte(0xF7); // packed field
+		To.writeByte(0); // 
+	}
+	
+	/**
+	* Extracts image pixels into byte array "pixels"
+	*/
+	private inline function getImagePixels(Data:BitmapData):ByteArray
+	{
+		pixels = new ByteArray();
+		
+		var count:Int = 0;
+		
+		for (i in 0...height)
+		{
+			for (j in 0...width)
+			{
+				var pixel:UInt = Data.getPixel(j, i);
+				
+				pixels[count] = (pixel & 0xFF0000) >> 16;
+				count++;
+				pixels[count] = (pixel & 0x00FF00) >> 8;
+				count++;
+				pixels[count] = (pixel & 0x0000FF);
+				count++;
+			}
+		}
+		
+		return pixels;
+	}
+	
 	/**
 	* Analyzes image colors and creates color map.
 	*/
@@ -208,12 +234,10 @@ class GIFEncoder
 		var len:Int = pixels.length;
 		var nPix:Int = Std.int(len / 3);
 		indexedPixels = new ByteArray();
-		//var nq:NeuQuant = new NeuQuant(pixels, len, quality);
+		
 		var nq:NeuQuant = new NeuQuant();
 		
 		// initialize quantizer
-		
-		//colorTab = nq.process(); // create reduced palette
 		
 		nq.quantize(pixels, true, colorDepth, 1, quality, true);
 		
@@ -225,7 +249,6 @@ class GIFEncoder
 		
 		for (j in 0...nPix)
 		{
-			//var index:Int = nq.map(pixels[k++] & 0xff, pixels[k++] & 0xff, pixels[k++] & 0xff);
 			var index:Int = nq.getColor(pixels[k++] & 0xff << 16 | pixels[k++] & 0xff << 8 | pixels[k++] & 0xff);
 			usedEntry[index] = true;
 			indexedPixels[j] = index;
@@ -285,30 +308,42 @@ class GIFEncoder
 	}
 	
 	/**
-	* Extracts image pixels into byte array "pixels"
+	* Writes Logical Screen Descriptor
 	*/
-	private inline function getImagePixels(Data:BitmapData):ByteArray
+	private inline function writeLSD():ByteArray
 	{
-		pixels = new ByteArray();
+		// logical screen size
 		
-		var count:Int = 0;
+		output.writeByte(byteShift(width, 1)); // 2 bytes: Screen width
+		output.writeByte(byteShift(width));
+		output.writeByte(byteShift(height, 1)); // 2 bytes: Screen height
+		output.writeByte(byteShift(height));
 		
-		for (i in 0...height)
-		{
-			for (j in 0...width)
-			{
-				var pixel:UInt = Data.getPixel(j, i);
-				
-				pixels[count] = (pixel & 0xFF0000) >> 16;
-				count++;
-				pixels[count] = (pixel & 0x00FF00) >> 8;
-				count++;
-				pixels[count] = (pixel & 0x0000FF);
-				count++;
-			}
-		}
+		// packed field
 		
-		return pixels;
+		writeBit(0x80, 0); // Global color table flag: 1 bit
+		writeBit(0x70, 1); // Color resolution: 3 bits
+		writeBit(0x70, 2);
+		writeBit(0x70, 3);
+		writeBit(0x00, 4); // Sort flag: 1 bit
+		writeBit(palSize, 5); // Size of global color table: 1 bit
+		writeBit(palSize, 6);
+		writeBit(palSize, 7);
+		
+		output.writeByte(0); // background color index
+		output.writeByte(0); // pixel aspect ratio - assume 1:1
+		
+		return output;
+	}
+	
+	private inline function writeBit(Value:Int, InPos:Int = 0):ByteArray
+	{
+		output.position -= 1;
+		var current:Int = output.readByte();
+		output.position -= 1;
+		output.writeByte(current | ((Value >> InPos) & 0xf));
+		
+		return output;
 	}
 	
 	/**
@@ -374,27 +409,6 @@ class GIFEncoder
 				0 | // 4-5 reserved
 				palSize); // 6-8 size of color table
 		}
-		
-		return output;
-	}
-	
-	/**
-	* Writes Logical Screen Descriptor
-	*/
-	private inline function writeLSD():ByteArray
-	{
-		// logical screen size
-		output.writeShort(width);
-		output.writeShort(height);
-		
-		// packed fields
-		output.writeByte((0x80 | // 1 : global color table flag = 1 (gct used)
-			0x70 | // 2-4 : color resolution = 7
-			0x00 | // 5 : gct sort flag = 0
-			palSize)); // 6-8 : gct size
-		
-		output.writeByte(0); // background color index
-		output.writeByte(0); // pixel aspect ratio - assume 1:1
 		
 		return output;
 	}
@@ -509,29 +523,11 @@ class GIFEncoder
 	}
 	
 	/**
-	 * Prevents setting width after first frame.
+	 * Returns the first byte of a value shifted right by Bytes.
 	 */
-	private inline function set_width(Value:UInt):UInt
+	private static function byteShift(Value:Int, Bytes:Int = 0):Int
 	{
-		if (started || Value < 1)
-		{
-			return width;
-		}
-		
-		return width = Value;
-	}
-	
-	/**
-	 * Prevents setting height after first frame.
-	 */
-	private inline function set_height(Value:UInt):UInt
-	{
-		if (started || Value < 1)
-		{
-			return height;
-		}
-		
-		return height = Value;
+		return (Pixel >> Bytes * 8) & 0xFF;
 	}
 	
 	#if !flash
