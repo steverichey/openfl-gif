@@ -3,7 +3,7 @@ package extension.gif;
 import openfl.utils.ByteArray;
 
 /**
- * This class handles Neural-Net quantization algorithm.
+ * This class handles the Neural-Net quantization algorithm.
  * Based on https://code.google.com/p/as3gif/
  * 
  * NeuQuant Neural-Net Quantization Algorithm
@@ -26,635 +26,829 @@ import openfl.utils.ByteArray;
  * that this copyright notice remain intact.
  * 
  * @author Steve Richey (Haxe/OpenFL version)
- * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
  * @author Thibault Imbert (AS3 version - bytearray.org)
+ * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
+ * @author Stuart Coyle (Modified to quantize 32bit RGBA images for the pngnq program, modified to accept a number of colors argument.)
+ * @author Kornel Lesinski (Euclidean distance, color matching dependent on alpha channel and with gamma correction. code refreshed for modern compilers/architectures: ANSI C, floats, removed pointer tricks and used arrays and structs.)
  * 
  * @version 0.1 Haxe implementation
  */
+
+import haxe.io.Bytes;
+import haxe.io.BytesBuffer;
+
+class LearningStatus
+{
+	public var i:Int = 0;
+	public var al:Int = 0;
+	public var b:Int = 0;
+	public var g:Int = 0;
+	public var r:Int = 0;
+	public var p:Int = 0;
+	public var rad:Int = 0;
+	public var step:Int = 0;
+	public var delta:Int = 0;
+	public var samplepixels:Int = 0;
+	public var radius:Float = 0;
+	public var alpha:Float = 0;
+	public var started:Bool = false;
+	public var finished:Bool = false;
+	public function new() { }
+}
+
+class QuantizationStatus
+{
+	public var finished:Bool = false;
+	public var percentage:Int = 0;
+	public var workChunkTimeSize:Float = 0;
+	public var chunkStartedTime:Float = 0;
+	public function new() {	}
+}
+
+typedef NqPixel = {
+	var al:Float;
+	var b:Float;
+	var g:Float;
+	var r:Float;
+}
+
+typedef NqColormap = {
+	var r:Int;
+	var g:Int;
+	var b:Int;
+	var al:Int;
+}
+
+typedef NqLabColormap = {
+	var l:Float;
+	var a:Float;
+	var b:Float;
+	var al:Int;
+}
+
 class NeuQuant
 {
 	/**
-	 * Number of colors used.
+	 * Maximum number of colours that can be used. actual number is now passed to initcolors.
 	 */
-	private static var netsize:Int = 256;
-	/**
-	 * Four primes near 500 - assume no image has a length so large that it is divisible by all four primes.
-	 */
-	private static var prime1:Int = 499;
-	private static var prime2:Int = 491;
-	private static var prime3:Int = 487;
-	private static var prime4:Int = 503;
-	/**
-	 * Minimum size for input image.
-	 */
-	private static var minpicturebytes:Int = (3 * prime4);
-	/*
-	* Program Skeleton ---------------- [select samplefac in range 1..30] [read
-	* image from input file] pic = (unsigned char*) malloc(3*width*height);
-	* initnet(pic,3*width*height,samplefac); learn(); unbiasnet(); [write output
-	* image header, using writecolourmap(f)] inxbuild(); write output image using
-	* inxsearch(b,g,r)
-	*/
+	static var MAXNETSIZE: Int = 256;
 	
-	/*
+	/**
+	 * Four primes near 500 - assume no image has a length so large that it is divisible by all four primes
+	 */
+	static var prime1: Int	=	499;
+    static var prime2: Int	=	491;
+    static var prime3: Int	=	487;
+    static var prime4: Int	=	503;
+    static var minpicturebytes: Int = 4 * prime4;
+	
+	/**
 	 * Network Definitions
 	 */
-	private static var maxnetpos:Int = (netsize - 1);
-	private static var netbiasshift:Int = 4; /* bias for colour values */
-	private static var ncycles:Int = 100; /* no. of learning cycles */
-	/**
-	 * Defs for freq and bias
-	 */
-	private static var intbiasshift:Int = 16; /* bias for fractions */
-	private static var intbias:Int = (1 << intbiasshift);
-	private static var gammashift:Int = 10; /* gamma = 1024 */
-	private static var gamma:Int = (1 << gammashift);
-	private static var betashift:Int = 10;
-	private static var beta:Int = (intbias >> betashift); /* beta = 1/1024 */
-	private static var betagamma:Int = (intbias << (gammashift - betashift));
-	
+	static var maxnetpos: Int = (MAXNETSIZE-1);
+	public static var ncycles: Int	=	100;			// no. of learning cycles
+
+	/* defs for freq and bias */
+	static var gammashift: Int = 10;			/* gamma = 1024 */
+	static var gamma: Float =  	(1<<gammashift);
+	static var betashift: Int =	10;
+	static var beta: Float = (1.0 / (1<<betashift));	/* beta = 1/1024 */
+	static var betagamma: Float	 = (1<<(gammashift-betashift));
+
 	/* defs for decreasing radius factor */
-	private static var initrad:Int = (netsize >> 3); /*
-														 * for 256 cols, radius
-														 * starts
-														 */
-														 
-	private static var radiusbiasshift:Int = 6; /* at 32.0 biased by 6 bits */
-	private static var radiusbias:Int = (1 << radiusbiasshift);
-	private static var initradius:Int = (initrad * radiusbias); /*
-																   * and
-																   * decreases
-																   * by a
-																   */
-																   
-	private static var radiusdec:Int = 30; /* factor of 1/30 each cycle */
-	
+	static var initrad: Int = (MAXNETSIZE>>3);		/* for 256 cols, radius starts */
+	static var initradius: Float = (initrad * 1.0);	/* and decreases by a */
+	static var radiusdec: Float = 30;			/* factor of 1/30 each cycle */ 
+
 	/* defs for decreasing alpha factor */
-	private static var alphabiasshift:Int = 10; /* alpha starts at 1.0 */
-	private static var initalpha:Int = (1 << alphabiasshift);
-	private var alphadec:Int; /* biased by 10 bits */
-	
+	static var alphabiasshift: Int = 10;			/* alpha starts at 1.0 */
+	static var initalpha: Float = (1<<alphabiasshift);
+	var alphadec: Float;					/* biased by 10 bits */
+
 	/* radbias and alpharadbias used for radpower calculation */
-	private static var radbiasshift:Int = 8;
-	private static var radbias:Int = (1 << radbiasshift);
-	private static var alpharadbshift:Int = (alphabiasshift + radbiasshift);
+	static var radbiasshift: Int =	8;
+	static var radbias: Int = (1<<radbiasshift);
+	static var alpharadbshift: Int = (alphabiasshift + radbiasshift);
+	static var alpharadbias: Float = (1<<alpharadbshift);
+
+	/* Types and Global Variables
+	-------------------------- */
+   
+	var thepicture: Bytes;		/* the input image itself */
+	var isARGB: Bool; 			/* ARGB (e.g. Flash) or RGBA (e.g. PNG) */
+	var lengthcount: Int;				/* lengthcount = H*W*3 */
 	
-	private static var alpharadbias:Int = (1 << alpharadbshift);
+	var network: Array<NqPixel>;			/* the network itself */
+	var netindex: Array<Int>;			/* for network lookup - really 256 */
+
+	var bias: Array<Float>;			/* bias and freq arrays for learning */
+	var freq: Array<Float>;
+	var radpower: Array<Float>;			/* radpower for precomputation */
+
+	var netsize: Int;                             /* Number of colours to use. Made a global instead of #define */
+
+	var gamma_correction: Float; // 1.0/2.2 usually
 	
-	/*
-	* Types and Global Variables --------------------------
-	*/
+	var compareInLabColorSpace: Bool;
 	
-	private var thepicture:ByteArray;/* the input image itself */
-	private var lengthcount:Int; /* lengthcount = H*W*3 */
-	private var samplefac:Int; /* sampling factor 1..30 */
+	public function new() { }
 	
-	// typedef int pixel[4]; /* BGRc */
-	private var network:Array<Array<Int>> = [[]]; /* the network itself - [netsize][4] */
-	private var netindex:Array<Int> = [];
-	
-	/* for network lookup - really 256 */
-	private var bias:Array<Int> = [];
-	
-	/* bias and freq arrays for learning */
-	private var freq:Array<Int> = [];
-	private var radpower:Array<Int> = [];
-	
-	public function new(thepic:ByteArray, len:Int, sample:Int)
+	/**
+	 * Quantizes an image. An image should be a byte array with 32 bit per pixel. It supports ARGB and RGBA.
+	 * 
+	 * @param	image Bytes
+	 * @param	isARGB Bool
+	 * @param	colorsAmount A result number of colors
+	 * @param	gammaCorrection A gamma correction factor
+	 * @param	sampleFactor A quality factor in [1..30]. 1 is the best, 30 is the worst.
+	 * @param	verbose Bool
+	 */
+	public function quantize(image:Bytes, isARGB:Bool, colorsAmount:Int, gammaCorrection:Float, sampleFactor:Int, verbose:Bool)
 	{
-		var i:Int;
-		var p:Array<Int> = [];
+		quantizeAsync(image, isARGB, colorsAmount, gammaCorrection, sampleFactor, verbose, 31536000000 /* a year */);
+	}
+	
+	var quantizationStatus:QuantizationStatus;
+	
+	/**
+	 * It quantizes an image in asynchronous way. Whole work is separated to small chunks with specified maximum operating time. 
+	 * When each chunk finishes the method returns current status (QuantizationStatus).
+	 * 
+	 * @param	image Bytes
+	 * @param	isARGB Bool
+	 * @param	colorsAmount
+	 * @param	colorsAmount A result number of colors
+	 * @param	gammaCorrection A gamma correction factor
+	 * @param	sampleFactor A quality factor in [1..30]. 1 is the best, 30 is the worst.
+	 * @param	verbose Bool
+	 * @param	workChunkTimeSize Maximum operating time for a current chunk in milliseconds.
+	 * @return  A currect status of quantization (QuantizeStatus)
+	 */
+	public function quantizeAsync(image:Bytes, isARGB:Bool, colorsAmount:Int, gammaCorrection:Float, sampleFactor:Int, verbose:Bool, workChunkTimeSize: Float, ?compareInLabColorSpace: Bool):QuantizationStatus
+	{
+		this.isARGB = isARGB;
+		this.compareInLabColorSpace = compareInLabColorSpace;
+		
+		if (quantizationStatus == null || quantizationStatus.finished)
+		{
+			quantizationStatus = new QuantizationStatus();
+			quantizationStatus.workChunkTimeSize = workChunkTimeSize;
+			learningStatus = new LearningStatus();
+			initnet(image, colorsAmount, gammaCorrection);
+		}
+		
+		quantizationStatus.chunkStartedTime = Date.now().getTime();
+		
+		learn(sampleFactor, verbose);
+		quantizationStatus.percentage = Std.int(learningStatus.i / learningStatus.samplepixels * 100);
+		
+		if (!learningStatus.finished)
+		{
+			return quantizationStatus; //Learning was interruped
+		}
+		
+		inxbuild();
+		
+		if (compareInLabColorSpace)
+		{
+			calculateLabColors();
+		}
+		
+		quantizationStatus.finished = true;
+		
+		return quantizationStatus;
+	}
+	
+	/* Initialise network in range (0,0,0,0) to (255,255,255,255) and set parameters
+	   ----------------------------------------------------------------------- */
+
+	var biasvalues: Array<Float>;
+
+	function initnet(thepic: Bytes, colours: Int, gamma_c: Float): Void {
+		var i: Int;
+		
+		gamma_correction = gamma_c;
 		
 		thepicture = thepic;
-		lengthcount = len;
-		samplefac = sample;
+		lengthcount = thepic.length;
+		netsize = colours; 
 		
-		for (i in 0...netsize)
-		{
-			
-			network[i] = [0, 0, 0, 0];
-			p = network[i];
-			p[0] = p[1] = p[2] = Std.int((i << (netbiasshift + 8)) / netsize);
-			freq[i] = Std.int(intbias / netsize); /* 1/netsize */
-			bias[i] = 0;
-		}
-	}
-	
-	private function colorMap():ByteArray
-	{
-		var map:ByteArray = new ByteArray();
-		var index:Array<Int> = [for (i in 0...netsize) 0];
-		
-		for (i in 0...netsize)
-			index[network[i][3]] = i;
-		
-		var k:Int = 0;
-		
-		for (l in 0...netsize)
-		{
-		  var j:Int = index[l];
-		  map[k++] = network[j][0];
-		  map[k++] = network[j][1];
-		  map[k++] = network[j][2];
+		biasvalues = new Array<Float>();
+		for(i in 0...MAXNETSIZE) {
+			var temp: Float;
+			temp = Math.pow(i/255.0, 1.0/gamma_correction) * 255.0;
+			temp = Math.round(temp);
+			biasvalues.push(temp);
 		}
 		
-		return map;
+		network = new Array<NqPixel>();
+		freq = new Array<Float>();
+		bias = new Array<Float>();
+		for (i in 0 ... netsize) {
+			var v: Float = biasvalue(Std.int(i * 256 / netsize));
+			network.push({b:v, g:v, r:v, al: if (i < 16) (i*16)*1.0 else 255.0});
+			freq.push(1.0/netsize);	/* 1/netsize */
+			bias.push(0.0);
+		}
+	}
+
+	function unbiasvalue(temp: Float):Int
+	{
+		if (temp < 0)
+		{
+			return 0;
+		}
+		
+		temp = Math.pow(temp/255.0, gamma_correction) * 255.0;    
+		temp = Math.floor((temp / 255.0 * 256.0));
+		
+		if (temp > 255)
+		{
+			return 255;
+		}
+		
+		return Std.int(temp);
+	}
+
+	function round_biased(temp:Float):Int
+	{    
+		if (temp < 0)
+		{
+			return 0;
+		}
+		
+		temp = Math.floor((temp / 255.0 * 256.0));
+		
+		if (temp > 255)
+		{
+			return 255;    
+		}
+		
+		return Std.int(temp);
 	}
 	
-	/*
-   * Insertion sort of network and building of netindex[0..255] (to do after
-   * unbias)
-   * -------------------------------------------------------------------------------
-   */
-	private function inxbuild():Void
+	inline function biasvalue(temp:Int):Float
+	{    
+		return biasvalues[temp];
+	}
+
+	/* Output colormap to unsigned char ptr in RGBA format */
+	//function getcolormap(map: BytesBuffer): Void {
+		//var j: Int;
+		//for(j in 0 ... netsize) {
+			//map.addByte(unbiasvalue(network[j].r));
+			//map.addByte(unbiasvalue(network[j].g));
+			//map.addByte(unbiasvalue(network[j].b));
+			//map.addByte(round_biased(network[j].al));
+		//}
+	//}
+	
+	/**
+	 * Insertion sort of network and building of netindex[0..255] (to do after unbias)
+	 */
+	var colormap: Array<NqColormap>;
+	var labColorMap: Array<NqLabColormap>;
+
+	function inxbuild(): Void
 	{
-		var i:Int;
-		var j:Int;
-		var smallpos:Int;
-		var smallval:Int;
-		var p:Array<Int>;
-		var q:Array<Int>;
-		var previouscol:Int;
-		var startpos:Int;
+		var i: Int, j: Int, smallpos: Int, smallval: Int;
+		var previouscol: Int, startpos: Int;
+		
+		netindex = new Array<Int>();
+		for (i in 0...256) {
+			netindex.push(0);
+		}
+		
+		colormap = new Array<NqColormap>();
+		for (i in 0...netsize) {
+			colormap.push({
+				r: Std.int(biasvalue(unbiasvalue(network[i].r))),
+				g: Std.int(biasvalue(unbiasvalue(network[i].g))),
+				b: Std.int(biasvalue(unbiasvalue(network[i].b))),
+				al: round_biased(network[i].al) });
+		}
 		
 		previouscol = 0;
 		startpos = 0;
-		
-		for (i in 0...netsize)
-		{
-			p = network[i];
+		for (i in 0 ... netsize) {
 			smallpos = i;
-			smallval = p[1]; // index on g
-		  
-			// find smallest in i..netsize-1
-			
-			for (j in (i + 1)...netsize)
-			{
-				q = network[j];
-				
-				if (q[1] < smallval)
-				{
-					// index on g
+			smallval = (colormap[i].g);			/* index on g */
+			/* find smallest in i..netsize-1 */
+			for (j in (i+1)...netsize) {
+				if ((colormap[j].g) < smallval) {		/* index on g */
 					smallpos = j;
-					smallval = q[1]; // index on g
+					smallval = (colormap[j].g);	/* index on g */
 				}
 			}
-			
-			q = network[smallpos];
-			
-			// swap p (i) and q (smallpos) entries
-			
-			if (i != smallpos)
-			{
-				j = q[0];
-				q[0] = p[0];
-				p[0] = j;
-				
-				j = q[1];
-				q[1] = p[1];
-				p[1] = j;
-				
-				j = q[2];
-				q[2] = p[2];
-				p[2] = j;
-				
-				j = q[3];
-				q[3] = p[3];
-				p[3] = j;
+			/* swap colormap[i] (i) and colormap[smallpos] (smallpos) entries */
+			if (i != smallpos) {
+				var temp = network[smallpos];   network[smallpos] = network[i];   network[i] = temp;
+				var tempc = colormap[smallpos];   colormap[smallpos] = colormap[i];   colormap[i] = tempc;
 			}
-			
 			/* smallval entry is now in position i */
-			
-			if (smallval != previouscol)
-			{
-				netindex[previouscol] = (startpos + i) >> 1;
-				
-				for (j in (previouscol + 1)...smallval)
-				{
-					netindex[j] = i;
-				}
-				
+			if (smallval != previouscol) {
+				netindex[previouscol] = (startpos+i)>>1;
+				for (j in (previouscol+1)...(smallval)) netindex[j] = i;
 				previouscol = smallval;
 				startpos = i;
 			}
 		}
+		netindex[previouscol] = (startpos+maxnetpos)>>1;
+		for (j in (previouscol+1)...256) netindex[j] = maxnetpos; /* really 256 */
+	}
+	
+	inline function colorimportance(al:Float):Float
+	{
+		var transparency: Float = 1.0 - al/255.0;
+		return (1.0 - transparency*transparency);
+	}
+
+	function calculateLabColors()
+	{
+		labColorMap = [];
 		
-		netindex[previouscol] = (startpos + maxnetpos) >> 1;
-		
-		for (j in (previouscol + 1)...256)
+		for (i in 0...netsize)
 		{
-			netindex[j] = maxnetpos; /* really 256 */
+			var xyz = rgb2xyz(colormap[i].r, colormap[i].g, colormap[i].b);
+			var lab = xyz2cielab(xyz.x, xyz.y, xyz.z );
+			labColorMap.shift( { al: colormap[i].al, l: lab.l, a: lab.a, b: lab.b } );
 		}
 	}
-   
+	
+	function getLabDistance(i:Int, al:Int, l:Float, a:Float, b:Float):Float
+	{
+		var	x: Float = labColorMap[i].l - l;
+		var dist: Float = x * x;
+		
+		x = labColorMap[i].a - a;
+		dist += x*x;
+		
+		x = labColorMap[i].b - b;
+		dist += x*x;
+		
+		x = labColorMap[i].al - al;
+		dist += x * x;
+		
+		return dist;
+	}
+	
+	function getRgbDistance(i:Int, al:Int, b:Int, g:Int, r:Int)
+	{
+		var	a: Float = colormap[i].r - r;
+		var dist: Float = a*a;
+		
+		a = colormap[i].g - g;
+		dist += a*a;
+		
+		a = colormap[i].b - b;
+		dist += a*a;
+		
+		a = colormap[i].al - al;
+		dist += a * a;
+		return dist;
+		
+	}
+	
+	/**
+	 * Search for ABGR values 0..255 (after net is unbiased) and return color index
+	 * 
+	 * @param	al
+	 * @param	b
+	 * @param	g
+	 * @param	r
+	 * @return
+	 */
+	function slowinxsearch(al: Int, b: Int, g: Int, r: Int): Int
+	{
+		var i:Int = 0;
+		var best:Int = 0;
+		var bestd:Float = -1;
+		var dist:Float = 0;
+		
+		r = Std.int(biasvalue(r));
+		g = Std.int(biasvalue(g));
+		b = Std.int(biasvalue(b));
+		
+		var lab:Dynamic = null;
+		
+		if (compareInLabColorSpace)
+		{
+			var xyz = rgb2xyz(r, g, b);
+			lab = xyz2cielab(xyz.x, xyz.y, xyz.z );
+		}
+		
+		for (i in 0...netsize)
+		{
+			if (compareInLabColorSpace)
+			{
+				dist = getLabDistance(i, al, lab.l, lab.a, lab.b);
+			}
+			else
+			{
+				dist = getRgbDistance(i, al, b, g, r);
+			}
+			
+			if (dist < bestd || bestd == -1)
+			{
+				bestd = dist; best = i;
+			}
+		}
+		
+		return best;
+	}
+
+    /**
+     * Getting an index of a specified color in a resulted palette.
+     * @param	color 32-bit integer
+     */
+	public function lookup (color: Int)
+	{
+	    var al: Int = (color >> 24) & 0xff;
+	    var r: Int = (color >> 16) & 0xff;
+	    var g: Int = (color >>  8) & 0xff;
+	    var b: Int = (color      ) & 0xff;
+		
+	    return slowinxsearch(al, b, g, r);
+	}
+
+	/**
+	 * Getting a 32-bit ARGB integer for a index of color using a current palette.
+	 * @param	index Int
+	 * @return
+	 */
+	public function getColor(index:Int):Int
+	{
+		return (colormap[index].al << 24) | (colormap[index].r << 16) | (colormap[index].g << 8) | colormap[index].b;
+	}
+	
+	function inxsearch(al:Int, b:Int, g:Int, r:Int):Int
+	{
+		var i:Int; 
+		var j:Int; 
+		var dist: Float, a: Float, bestd: Float;
+		var best: Int;
+		
+		bestd = 1<<30;		/* biggest possible dist */
+		best = 0;
+	 
+		if (al > 0)	{       
+			r = Std.int(biasvalue(r));
+			g = Std.int(biasvalue(g));
+			b = Std.int(biasvalue(b));
+		} else {
+			r=g=b=0;
+		}
+		
+		i = netindex[(g)];	/* index on g */
+		j = i-1;		/* start at netindex[g] and work outwards */
+		
+		var colimp: Float = colorimportance(al);
+		
+		while ((i<netsize) || (j>=0)) {
+			if (i<netsize) {
+				a = colormap[i].g - g;		/* inx key */
+				dist = a*a * colimp;
+				if (dist > bestd) break;	/* stop iter */
+				else {								
+					a = colormap[i].r - r;
+					dist += a*a * colimp;				
+					if (dist<bestd) {
+						a = colormap[i].b - b;
+						dist += a*a * colimp;
+						if(dist<bestd) {
+							a = colormap[i].al - al;
+							dist += a*a;
+							if (dist<bestd) {bestd=dist; best=i;}
+						}                    
+					}								
+					i++;
+				}            
+			}
+			if (j>=0) {
+				a = colormap[j].g - g; /* inx key - reverse dif */
+				dist = a*a * colimp;
+				if (dist > bestd) break; /* stop iter */
+				else {				
+					a = colormap[j].b - b;
+					dist += a*a * colimp;				
+					if (dist<bestd) {
+						a = colormap[j].r - r;
+						dist += a*a * colimp;                    
+						if(dist<bestd) {
+							a = colormap[j].al - al;
+							dist += a*a;
+							if (dist<bestd) {bestd=dist; best=j;}
+						}			                    
+					}				
+					j--;
+				}            
+			}
+		}
+		
+		return(best);
+	}
+	
+	/**
+	 * Search for biased ABGR values.
+	 * 
+	 * @param	al
+	 * @param	b
+	 * @param	g
+	 * @param	r
+	 * @return
+	 */
+	 function contest(al: Float, b: Float, g: Float, r: Float): Int {
+		/* finds closest neuron (min dist) and updates freq */
+		/* finds best neuron (min dist-bias) and returns position */
+		/* for frequently chosen neurons, freq[i] is high and bias[i] is negative */
+		/* bias[i] = gamma*((1/netsize)-freq[i]) */
+
+		var i: Int; 
+		var dist: Float, a: Float, betafreq: Float;
+		var bestpos: Int, bestbiaspos: Int;
+		var bestd: Float, bestbiasd: Float;
+		
+		bestd = 1<<30;
+		bestbiasd = bestd;
+		bestpos = 0;
+		bestbiaspos = bestpos;
+
+		var colimp: Float = colorimportance(al);
+		
+		for (i in 0...netsize) {
+			var bestbiasd_biased: Float = bestbiasd + bias[i];
+			
+			a = network[i].b - b;
+			dist = Math.abs(a) * colimp;
+			a = network[i].r - r;
+			dist += Math.abs(a) * colimp;
+			
+			if (dist < bestd || dist < bestbiasd_biased)
+			{                 
+				a = network[i].g - g;
+				dist += Math.abs(a) * colimp;
+				a = network[i].al - al; 
+				dist += Math.abs(a);    
+				
+				if (dist<bestd) {bestd=dist; bestpos=i;}
+				if (dist<bestbiasd_biased) {bestbiasd=dist - bias[i]; bestbiaspos=i;}
+			}
+			betafreq = freq[i] / (1<< betashift);
+			freq[i] -= betafreq;
+			bias[i] += betafreq * (1<<gammashift);
+		}
+		freq[bestpos] += beta;
+		bias[bestpos] -= betagamma;
+		return(bestbiaspos);
+	}
+	
+	/**
+	 * Move neuron i towards biased (a,b,g,r) by factor alpha.
+	 * 
+	 * @param	alpha
+	 * @param	i
+	 * @param	al
+	 * @param	b
+	 * @param	g
+	 * @param	r
+	 */
+	function altersingle(alpha:Float, i:Int, al:Float, b:Float, g:Float, r:Float):Void
+	{    
+		var colorimp: Float = 1.0;//0.5;// + 0.7*colorimportance(al);
+		
+		alpha /= initalpha;
+		
+		/* alter hit neuron */
+		network[i].al -= alpha*(network[i].al - al);
+		network[i].b -= colorimp*alpha*(network[i].b - b);
+		network[i].g -= colorimp*alpha*(network[i].g - g);
+		network[i].r -= colorimp*alpha*(network[i].r - r);
+	}
+	
+	/**
+	 * Move adjacent neurons by precomputed alpha*(1-((i-j)^2/[r]^2)) in radpower[|i-j|].
+	 * 
+	 * @param	rad
+	 * @param	i
+	 * @param	al
+	 * @param	b
+	 * @param	g
+	 * @param	r
+	 */
+	function alterneigh(rad:Int, i:Int, al:Float, b:Float, g:Float, r:Float):Void
+	{
+		var j: Int, hi: Int;
+		var k: Int, lo: Int, q: Int;
+		var a: Float;
+		
+		lo = i-rad;   if (lo<0) lo=0;
+		hi = i+rad;   if (hi>netsize-1) hi=netsize-1;
+		
+		j = i+1;
+		k = i-1;
+		q = 0;
+		
+		while ((j<=hi) || (k>=lo)) {
+			a = (radpower[q++]) / alpharadbias;
+			if (j<=hi) {
+				network[j].al -= a*(network[j].al - al);
+				network[j].b  -= a*(network[j].b  - b) ;
+				network[j].g  -= a*(network[j].g  - g) ;
+				network[j].r  -= a*(network[j].r  - r) ;
+				j++;
+			}
+			if (k>=lo) {
+				network[k].al -= a*(network[k].al - al);
+				network[k].b  -= a*(network[k].b  - b) ;
+				network[k].g  -= a*(network[k].g  - g) ;
+				network[k].r  -= a*(network[k].r  - r) ;
+				k--;
+			}
+		}
+	}
+	
 	/**
 	 * Main Learning Loop
 	 */
-	private function learn():Void
-	{
-		var i:Int;
-		var j:Int;
-		var b:Int;
-		var g:Int;
-		var r:Int;
-		var radius:Int;
-		var rad:Int;
-		var alpha:Int;
-		var step:Int;
-		var delta:Int;
-		var samplepixels:Int;
-		var p:ByteArray;
-		var pix:Int;
-		var lim:Int;
+	var learningStatus: LearningStatus;
+	
+	/**
+	 * Sampling factor 1..30
+	 * 
+	 * @param	samplefac
+	 * @param	verbose
+	 */
+	function learn(samplefac: Int, verbose: Bool)
+	{ /* Stu: N.B. added parameter so that main() could control verbosity. */
+		var s: LearningStatus = learningStatus;
 		
-		if (lengthcount < minpicturebytes) samplefac = 1;
-	   
-		alphadec = Std.int(30 + ((samplefac - 1) / 3));
-		p = thepicture;
-		pix = 0;
-		lim = lengthcount;
-		samplepixels = Std.int(lengthcount / (3 * samplefac));
-		delta = Std.int(samplepixels / ncycles);
-		alpha = initalpha;
-		radius = initradius;
-		
-		rad = radius >> radiusbiasshift;
-		
-		if (rad <= 1)
+		if (s.finished)
 		{
-			rad = 0;
+			return; //All work was done
 		}
 		
-		for (i in 0...rad)
+		if (!s.started)
 		{
-			radpower[i] = Std.int(alpha * (((rad * rad - i * i) * radbias) / (rad * rad)));
-		}
-		
-		if (lengthcount < minpicturebytes)
-		{
-			step = 3;
-		}
-		else if ((lengthcount % prime1) != 0)
-		{
-			step = 3 * prime1;
-		}
-		else
-		{
-			if ((lengthcount % prime2) != 0)
+			alphadec = 30 + ((samplefac-1)/3);
+			s.samplepixels = Std.int(lengthcount/(4*samplefac)); 
+			s.delta = Std.int(s.samplepixels/ncycles);  /* here's a problem with small images: samplepixels < ncycles => delta = 0 */
+			if(s.delta==0) s.delta = 1;        /* kludge to fix */
+			s.alpha = initalpha;
+			s.radius = initradius;
+			
+			s.p = 0;
+			
+			s.rad = Std.int(s.radius);
+			if (s.rad <= 1) s.rad = 0;
+			radpower = new Array<Float>();
+			
+			for (i in 0...(s.rad))
 			{
-				step = 3 * prime2;
+				radpower.push(Math.floor( s.alpha*(((s.rad*s.rad - i*i)*radbias)/(s.rad*s.rad)) ));
+			}
+			
+			if (verbose)
+			{
+				trace("beginning 1D learning: initial radius=" + s.rad + "\n");
+			}
+			
+			if ((lengthcount % prime1) != 0)
+			{
+				s.step = 4*prime1;
 			}
 			else
 			{
-				if ((lengthcount % prime3) != 0)
+				if ((lengthcount % prime2) != 0)
 				{
-					step = 3 * prime3;
+					s.step = 4*prime2;
 				}
 				else
 				{
-					step = 3 * prime4;
-				}
-			}
-		}
-		
-		i = 0;
-		
-		while (i < samplepixels)
-		{
-			b = (p[pix + 0] & 0xff) << netbiasshift;
-			g = (p[pix + 1] & 0xff) << netbiasshift;
-			r = (p[pix + 2] & 0xff) << netbiasshift;
-			j = contest(b, g, r);
-			
-			altersingle(alpha, j, b, g, r);
-			
-			if (rad != 0) alterneigh(rad, j, b, g, r); /* alter neighbours */
-			
-			pix += step;
-			
-			if (pix >= lim)
-			{
-				pix -= lengthcount;
-			}
-			
-			i++;
-			
-			if (delta == 0)
-			{
-				delta = 1;
-			}
-			
-			if (i % delta == 0)
-			{
-				alpha -= Std.int(alpha / alphadec);
-				radius -= Std.int(radius / radiusdec);
-				rad = radius >> radiusbiasshift;
-				
-				if (rad <= 1) rad = 0;
-				
-				for (j in 0...rad) radpower[j] = Std.int(alpha * (((rad * rad - j * j) * radbias) / (rad * rad)));
-			}
-		}
-	}
-	
-	/**
-	 * Search for BGR values 0..255 (after net is unbiased) and return colour index.
-	 */
-	public function map(b:Int, g:Int, r:Int):Int
-	{
-	   var i:Int;
-	   var j:Int;
-	   var dist:Int;
-	   var a:Int;
-	   var bestd:Int;
-	   var p:Array<Int>;
-	   var best:Int;
-	   
-	   bestd = 1000; /* biggest possible dist is 256*3 */
-	   best = -1;
-	   i = netindex[g]; /* index on g */
-	   j = i - 1; /* start at netindex[g] and work outwards */
-
-	while ((i < netsize) || (j >= 0))
-	{
-		if (i < netsize)
-		{
-			p = network[i];
-			
-			dist = p[1] - g; /* inx key */
-			
-			if (dist >= bestd) i = netsize; /* stop iter */
-			
-			else
-			
-			{
-				
-				i++;
-				
-				if (dist < 0) dist = -dist;
-				
-				a = p[0] - b;
-				
-				if (a < 0) a = -a;
-				
-				dist += a;
-				
-				if (dist < bestd)
-				
-				{
-					
-					a = p[2] - r;
-					
-					if (a < 0) a = -a;
-					
-					dist += a;
-					
-					if (dist < bestd)
-					
+					if ((lengthcount % prime3) != 0)
 					{
-						
-						bestd = dist;
-						best = p[3];
-						
+						s.step = 4*prime3;
 					}
-					
+					else
+					{
+						s.step = prime4;
+					}
 				}
-				
 			}
 			
+			s.i = 0;
+			s.started = true;
 		}
-	  
-	  if (j >= 0)
-	  {
-		  
-		  p = network[j];
-		  
-		  dist = g - p[1]; /* inx key - reverse dif */
-		  
-		  if (dist >= bestd) j = -1; /* stop iter */
-		  
-		  else 
-		  {
-			  
-			  j--;
-			  if (dist < 0) dist = -dist;
-			  a = p[0] - b;
-			  if (a < 0) a = -a;
-			  dist += a;
-			  
-			  if (dist < bestd)
-			  
-			  {
-				  
-				  a = p[2] - r;
-				  if (a < 0)a = -a;
-				  dist += a;
-				  if (dist < bestd)
-				  {
-					  bestd = dist;
-					  best = p[3];
-				  }
-				  
-			  }
-			  
-		  }
-		  
-	  }
-	  
-	}
-	
-	return (best);
-	
-  }
-  
-  public function process():ByteArray
-  {
-   
-	learn();
-	unbiasnet();
-	inxbuild();
-	return colorMap();
-	
-  }
-  
-  /*
-  * Unbias network to give byte values 0..255 and record position i to prepare
-  * for sort
-  * -----------------------------------------------------------------------------------
-  */
-  
-  private function unbiasnet():Void
-  {
-	var i:Int;
-	var j:Int;
-
-	for (i in 0...netsize)
-	{
-	  network[i][0] >>= netbiasshift;
-	  network[i][1] >>= netbiasshift;
-	  network[i][2] >>= netbiasshift;
-	  network[i][3] = i; /* record colour no */
-	}
-  }
-  
-  /*
-  * Move adjacent neurons by precomputed alpha*(1-((i-j)^2/[r]^2)) in
-  * radpower[|i-j|]
-  * ---------------------------------------------------------------------------------
-  */
-  
-  private function alterneigh(rad:Int, i:Int, b:Int, g:Int, r:Int):Void
-  
-  {
-	  
-	  var j:Int;
-	  var k:Int;
-	  var lo:Int;
-	  var hi:Int;
-	  var a:Int;
-	  var m:Int;
-	  
-	  var p:Array<Int>;
-	  
-	  lo = i - rad;
-	  if (lo < -1) lo = -1;
-	  
-	  hi = i + rad;
-	  
-	  if (hi > netsize) hi = netsize;
-	  
-	  j = i + 1;
-	  k = i - 1;
-	  m = 1;
-	  
-		while ((j < hi) || (k > lo))
+		
+		while (s.i < s.samplepixels)
 		{
-			a = radpower[m++];
-			
-			if (j < hi)
-			{
-				p = network[j++];
-				
-				try
+			if (isARGB && thepicture.get(s.p) > 0 || !isARGB && thepicture.get(s.p + 3) > 0)
+			{            
+				if (isARGB)
 				{
-					p[0] -= Std.int((a * (p[0] - b)) / alpharadbias);
-					p[1] -= Std.int((a * (p[1] - g)) / alpharadbias);
-					p[2] -= Std.int((a * (p[2] - r)) / alpharadbias);
-				}
-				catch (e:Dynamic)
-				{
-					// do nothing
-				}
-			}
-			
-			if (k > lo)
-			{
-				p = network[k--];
-				
-				try
-				{
-					
-					p[0] -= Std.int((a * (p[0] - b)) / alpharadbias);
-					p[1] -= Std.int((a * (p[1] - g)) / alpharadbias);
-					p[2] -= Std.int((a * (p[2] - r)) / alpharadbias);
-					
+					s.al = thepicture.get(s.p);
+					s.b = Std.int(biasvalue(thepicture.get(s.p + 3)));
+					s.g = Std.int(biasvalue(thepicture.get(s.p + 2)));
+					s.r = Std.int(biasvalue(thepicture.get(s.p + 1)));
 				} 
-				catch (e:Dynamic) 
+				else
 				{
-					// do nothing
+					s.al = thepicture.get(s.p + 3);
+					s.b = Std.int(biasvalue(thepicture.get(s.p + 2)));
+					s.g = Std.int(biasvalue(thepicture.get(s.p + 1)));
+					s.r = Std.int(biasvalue(thepicture.get(s.p)));
+				}
+			} 
+			else
+			{
+				s.al=s.r=s.g=s.b=0;
+			}
+			
+			var j = contest(s.al,s.b,s.g,s.r);
+			altersingle(s.alpha, j, s.al, s.b, s.g, s.r);
+			
+			if (s.rad > 0)
+			{
+				alterneigh(s.rad,j,s.al,s.b,s.g,s.r);   /* alter neighbours */
+			}
+			
+			s.p += s.step;
+			
+			while (s.p >= lengthcount)
+			{
+				s.p -= lengthcount;
+			}
+			
+			s.i++;
+			
+			// FPE here if delta=0
+			
+			if (s.i % s.delta == 0)
+			{
+				s.alpha -= s.alpha / alphadec;
+				s.radius -= s.radius / radiusdec;
+				s.rad = Std.int(s.radius);
+				if (s.rad <= 1)
+				{
+					s.rad = 0;
+				}
+				
+				for (j in 0...(s.rad))
+				{
+					radpower[j] = Math.floor( s.alpha*(((s.rad*s.rad - j*j)*radbias)/(s.rad*s.rad)) );
 				}
 			}
 			
-	  }
-	  
-  }
-	
-	/**
-	 * Move neuron i towards biased (b,g,r) by factor alpha.
-	 */
-	private function altersingle(alpha:Int, i:Int, b:Int, g:Int, r:Int):Void 
-	{
-		/* alter hit neuron */
-		var n:Array<Int> = network[i];
-		n[0] -= Std.int((alpha * (n[0] - b)) / initalpha);
-		n[1] -= Std.int((alpha * (n[1] - g)) / initalpha);
-		n[2] -= Std.int((alpha * (n[2] - r)) / initalpha);
+			if (Date.now().getTime() - quantizationStatus.chunkStartedTime > quantizationStatus.workChunkTimeSize)
+			{
+				return;
+			}
+		}
+		
+		if (verbose)
+		{
+			trace("finished 1D learning: final alpha=" + (1.0 * s.alpha / initalpha) + " !\n");
+		}
+		
+		s.finished = true;
 	}
-  
-	/*
-	* Search for biased BGR values ----------------------------
-	*/
-	private function contest(b:Int, g:Int, r:Int):Int
+
+	public static function rgb2xyz(r:Int, g:Int, b: Int):Dynamic
 	{
-	  /* finds closest neuron (min dist) and updates freq */
-	  /* finds best neuron (min dist-bias) and returns position */
-	  /* for frequently chosen neurons, freq[i] is high and bias[i] is negative */
-	  /* bias[i] = gamma*((1/netsize)-freq[i]) */
-	  
-	  var i:Int;
-	  var dist:Int;
-	  var a:Int;
-	  var biasdist:Int;
-	  var betafreq:Int;
-	  var bestpos:Int;
-	  var bestbiaspos:Int;
-	  var bestd:Int;
-	  var bestbiasd:Int;
-	  var n:Array<Int>;
-	  
-	  bestd = ~(1 << 31);
-	  bestbiasd = bestd;
-	  bestpos = -1;
-	  bestbiaspos = bestpos;
-	  
-	  for (i in 0...netsize)
-	  {
-		  
-		  n = network[i];
-		  dist = n[0] - b;
-		  
-		  if (dist < 0) dist = -dist;
-		  
-		  a = n[1] - g;
-		  
-		  if (a < 0) a = -a;
-		  
-		  dist += a;
-		  
-		  a = n[2] - r;
-		  
-		  if (a < 0) a = -a;
-		  
-		  dist += a;
-		  
-		  if (dist < bestd)
-		  
-		  {
-			  
-			  bestd = dist;
-			  bestpos = i;
-			  
-		  }
-		  
-		  biasdist = dist - ((bias[i]) >> (intbiasshift - netbiasshift));
-		  
-		  if (biasdist < bestbiasd)
-		  
-		  {
-			  
-			  bestbiasd = biasdist;
-			  bestbiaspos = i;
-			  
-		  }
-		  
-		  betafreq = (freq[i] >> betashift);
-		  freq[i] -= betafreq;
-		  bias[i] += (betafreq << gammashift);
-		  
-	  }
-	  
-	  freq[bestpos] += beta;
-	  bias[bestpos] -= betagamma;
-	  return (bestbiaspos);
-	} 
+		var fR: Float = ( r / 255);        //R from 0 to 255
+		var fG: Float = ( g / 255 );        //G from 0 to 255
+		var fB: Float = ( b / 255 );        //B from 0 to 255
+		
+		fR = if ( fR > 0.04045 ) Math.pow(( fR + 0.055 ) / 1.055, 2.4)	else fR / 12.92;
+		fG = if ( fG > 0.04045 ) Math.pow(( fG + 0.055 ) / 1.055, 2.4) else fG / 12.92;
+		fB = if ( fB > 0.04045 ) Math.pow(( fB + 0.055 ) / 1.055, 2.4) else fB / 12.92;
+		
+		fR *= 100;
+		fG *= 100;
+		fB *= 100;
+		
+		//Observer. = 2°, Illuminant = D65
+		
+		return {
+			x: fR * 0.4124 + fG * 0.3576 + fB * 0.1805,
+			y: fR * 0.2126 + fG * 0.7152 + fB * 0.0722,
+			z: fR * 0.0193 + fG * 0.1192 + fB * 0.9505	
+		};
+	}
+	
+	private static function xyz2cielab(x:Float, y: Float, z: Float):Dynamic
+	{
+		x /= 95.047;          //ref_X =  95.047   Observer= 2°, Illuminant= D65
+		y /= 100.0;          //ref_Y = 100.000
+		z /= 108.883;          //ref_Z = 108.883
+		
+		x = if ( x > 0.008856 ) Math.pow(x, 1/3) else ( 7.787 * x ) + ( 16 / 116 );
+		y = if ( y > 0.008856 ) Math.pow(y, 1/3) else ( 7.787 * y ) + ( 16 / 116 );
+		z = if ( z > 0.008856 ) Math.pow(z, 1/3) else ( 7.787 * z ) + ( 16 / 116 );
+		
+		return {
+			l: ( 116 * y ) - 16,
+			a: 500 * ( x - y ),
+			b: 200 * ( y - z )
+		};
+	}
 }

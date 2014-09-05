@@ -5,11 +5,11 @@ import openfl.utils.ByteArray;
 /**
  * This class handles Lempel–Ziv–Welch (LZW) encoding, which is a universal lossless data compression algorithm.
  * Based on https://code.google.com/p/as3gif/
- * Originally adapted from Jef Poskanzer's Java port by way of J. M. G. Elliott.
+ * Originally adapted from Jef Poskanzer's Java port by way of J.M.G. Elliott.
  * 
- * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
- * @author Thibault Imbert (AS3 version - bytearray.org)
  * @author Steve Richey (Haxe/OpenFL version)
+ * @author Thibault Imbert (AS3 version - bytearray.org)
+ * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
  * 
  * @version 0.1 Haxe implementation
  */
@@ -95,16 +95,18 @@ class LZWEncoder
 		initCodeSize = Std.int(Math.max(2, color_depth));
 	}
 	
-	// Add a character to the end of the current packet, and if it is 254
-	// characters, flush the packet to disk.
+	/**
+	 * Add a character to the end of the current packet, and if it is 254 characters, flush the packet to disk.
+	 */
 	private function char_out(c:Int, outs:ByteArray):Void
 	{
 		accum[a_count++] = c;
 		if (a_count >= 254)flush_char(outs);
 	}
 	
-	// Clear out the hash table
-	// table clear for block compress
+	/**
+	 * Clear out the hash table for block compress.
+	 */
 	private function cl_block(outs:ByteArray):Void
 	{
 		cl_hash(hsize);
@@ -113,7 +115,9 @@ class LZWEncoder
 		output(ClearCode, outs);
 	}
 	
-	// reset code table
+	/**
+	 * Reset code table.
+	 */
 	private function cl_hash(hsize:Int):Void
 	{
 		for (i in 0...hsize)

@@ -10,11 +10,11 @@ import gif.LZWEncoder;
 /**
  * This class lets you encode animated GIF files.
  * Based on https://code.google.com/p/as3gif/
- * Base class :  http://www.java2s.com/Code/Java/2D-Graphics-GUI/AnimatedGifEncoder.htm
+ * Base class: http://www.java2s.com/Code/Java/2D-Graphics-GUI/AnimatedGifEncoder.htm
  * 
  * @author Steve Richey (Haxe/OpenFL version)
- * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
  * @author Thibault Imbert (AS3 version - bytearray.org)
+ * @author Kevin Weiner (original Java version - kweiner@fmsware.com)
  * 
  * @version 0.1 Haxe implementation
  */
@@ -202,7 +202,7 @@ class GIFEncoder
 	/**
 	* Analyzes image colors and creates color map.
 	*/
-	inline private function analyzePixels():Void
+	inline private function analyzePixels():ByteArray
 	{
 		var len:Int = pixels.length;
 		var nPix:Int = Std.int(len / 3);
@@ -234,6 +234,8 @@ class GIFEncoder
 		{
 			transIndex = findClosest(transparent);
 		}
+		
+		return indexedPixels;
 	}
 	
 	/**
@@ -278,7 +280,7 @@ class GIFEncoder
 	/**
 	* Extracts image pixels into byte array "pixels"
 	*/
-	private inline function getImagePixels(Data:BitmapData):Void
+	private inline function getImagePixels(Data:BitmapData):ByteArray
 	{
 		pixels = new ByteArray();
 		
@@ -298,12 +300,14 @@ class GIFEncoder
 				count++;
 			}
 		}
+		
+		return pixels;
 	}
 	
 	/**
 	* Writes Graphic Control Extension
 	*/
-	private inline function writeGraphicCtrlExt():Void
+	private inline function writeGraphicCtrlExt():ByteArray
 	{
 		output.writeByte(0x21); // extension introducer
 		output.writeByte(0xf9); // GCE label
@@ -333,12 +337,14 @@ class GIFEncoder
 		output.writeShort(Math.round(delay / 10)); // delay x 1/100 sec
 		output.writeByte(transIndex); // transparent color index
 		output.writeByte(0); // block terminator
+		
+		return output;
 	}
 	
 	/**
 	* Writes Image Descriptor
 	*/
-	private inline function writeImageDesc():Void
+	private inline function writeImageDesc():ByteArray
 	{
 		output.writeByte(0x2c); // image separator
 		output.writeShort(0); // image position x,y = 0,0
@@ -361,12 +367,14 @@ class GIFEncoder
 				0 | // 4-5 reserved
 				palSize); // 6-8 size of color table
 		}
+		
+		return output;
 	}
 	
 	/**
 	* Writes Logical Screen Descriptor
 	*/
-	private inline function writeLSD():Void
+	private inline function writeLSD():ByteArray
 	{
 		// logical screen size
 		output.writeShort(width);
@@ -380,12 +388,14 @@ class GIFEncoder
 		
 		output.writeByte(0); // background color index
 		output.writeByte(0); // pixel aspect ratio - assume 1:1
+		
+		return output;
 	}
 	
 	/**
 	* Writes Netscape application extension to define repeat count.
 	*/
-	private function writeNetscapeExt():Void
+	private function writeNetscapeExt():ByteArray
 	{
 		output.writeByte(0x21); // extension introducer
 		output.writeByte(0xff); // app extension label
@@ -395,12 +405,14 @@ class GIFEncoder
 		output.writeByte(1); // loop sub-block id
 		output.writeShort(repeat); // loop count (extra iterations, 0=repeat forever)
 		output.writeByte(0); // block terminator
+		
+		return output;
 	}
 	
 	/**
 	* Writes color table
 	*/
-	private inline function writePalette():Void
+	private inline function writePalette():ByteArray
 	{
 		output.writeBytes(colorTab, 0, colorTab.length);
 		var n:Int = (3 * 256) - colorTab.length;
@@ -409,15 +421,19 @@ class GIFEncoder
 		{
 			output.writeByte(0);
 		}
+		
+		return output;
 	}
 	
 	/**
 	* Encodes and writes pixel data to stream.
 	*/
-	private inline function writePixels():Void
+	private inline function writePixels():ByteArray
 	{
 		var myencoder:LZWEncoder = new LZWEncoder(width, height, indexedPixels, colorDepth);
 		myencoder.encode(output);
+		
+		return output;
 	}
 	
 	/**
