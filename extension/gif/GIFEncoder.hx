@@ -4,7 +4,7 @@ import openfl.utils.ByteArray;
 import openfl.display.BitmapData;
 import openfl.display.Bitmap;
 
-#if !flash
+#if sys
 import sys.io.File;
 #end
 
@@ -530,9 +530,9 @@ class GIFEncoder
 		return (Pixel >> Bytes * 8) & 0xFF;
 	}
 	
-	#if !flash
+	#if sys
 	/**
-	 * Convenience function to output a GIF file from an array of BitmapData frames. Not supported in Flash.
+	 * Convenience function to output a GIF file from an array of BitmapData frames. Not supported in Flash or HTML5.
 	 * 
 	 * @param	Path    Path to the output file. Will throw exception if cannot write.
 	 * @param	Frames  An array of BitmapData, with each BitmapData object representing one frame of the animation.
