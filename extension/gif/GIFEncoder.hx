@@ -69,7 +69,7 @@ class GIFEncoder
 	/**
 	 * BGR byte array from frame.
 	 */
-	private var pixels:ByteArray; = null;
+	private var pixels:ByteArray = null;
 	/**
 	 * Converted frame indexed to palette.
 	 */
@@ -91,6 +91,9 @@ class GIFEncoder
 	 */
 	private var palSize:Int = 7;
 	
+	private var started:Bool = false;
+	private var firstFrame:Bool = false;
+	
 	inline static private var MAX_SHORT:Int = 32767;
 	
 	/**
@@ -98,6 +101,8 @@ class GIFEncoder
 	 */
 	public function new(FirstFrame:BitmapData)
 	{
+		started = true;
+		firstFrame = true;
 		width = FirstFrame.width;
 		height = FirstFrame.height;
 		
@@ -124,7 +129,7 @@ class GIFEncoder
 	{
 		if (!started)
 		{
-			start();
+			//start();
 		}
 		
 		if (NextFrame == null)
@@ -180,6 +185,7 @@ class GIFEncoder
 		}
 		
 		output.writeByte(0x3b); // gif trailer
+		started = false;
 		
 		return this;
 	}
@@ -197,6 +203,7 @@ class GIFEncoder
 		To.writeShort(Height);
 		To.writeByte(0xF7); // packed field
 		To.writeByte(0); // 
+		return To;
 	}
 	
 	/**
@@ -527,7 +534,7 @@ class GIFEncoder
 	 */
 	private static function byteShift(Value:Int, Bytes:Int = 0):Int
 	{
-		return (Pixel >> Bytes * 8) & 0xFF;
+		return (Value >> Bytes * 8) & 0xFF;
 	}
 	
 	#if sys
@@ -539,7 +546,7 @@ class GIFEncoder
 	 */
 	static public function exportFromArray(Path:String, Frames:Array<BitmapData>):Void
 	{
-		var encoder:GIFEncoder = new GIFEncoder();
+		var encoder:GIFEncoder = new GIFEncoder(Frames[0]);
 		
 		for (frame in Frames)
 		{
