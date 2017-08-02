@@ -1,4 +1,4 @@
-# [OpenFL GIF Extension](https://github.com/steverichey/openfl-gif) ![https://img.shields.io/badge/status-unsupported-red.svg]()
+# [OpenFL GIF Extension](https://github.com/steverichey/openfl-gif) <img src="https://img.shields.io/badge/status-unsupported-red.svg">
 
 Make GIFs in any OpenFL project.
 
